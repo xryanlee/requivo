@@ -547,11 +547,13 @@ def _status_payload(ref: str) -> tuple[EngineOutput, dict]:
     out, slug = _resolve_ref(ref)
     svc = SessionService()
     perimeter = DEFAULT_PERIMETER
-    if svc.exists(slug):
+    # A loose model.json never borrows a same-named session (#681, as `impact` does for #493).
+    is_session = not Path(ref).is_file() and svc.exists(slug)
+    if is_session:
         meta = svc.meta(slug)
         perimeter = resolve_perimeter(meta.perimeter)
     payload: dict = {"slug": slug, **model_status(out, perimeter)}
-    if svc.exists(slug):
+    if is_session:
         payload["revision"] = meta.current_revision
         payload["context_cards"] = meta.context_cards
         payload["perimeter"] = perimeter
@@ -577,10 +579,8 @@ def _cmd_status(a, client) -> None:
     render_grounding(payload.get("context_cards"))
     # Cumulative cost from the provenance on provider-backed revisions (#292); silent when there is none.
     slug = payload.get("slug")
-    if slug:
-        svc = SessionService()
-        if svc.exists(slug):
-            render_session_cost(svc.meta(slug).revisions)
+    if slug and "revision" in payload:   # present only for a canonical session (#681)
+        render_session_cost(SessionService().meta(slug).revisions)
     render_next_command(payload)
 
 
@@ -851,15 +851,16 @@ def _cmd_docs(a, client) -> None:
     if not svc.exists(slug):
         raise svc.no_session(slug)
     meta = svc.meta(slug)
+    owned_types = tuple(t for t in DOC_TYPES if t in get_perimeter(resolve_perimeter(meta.perimeter)).artifact_types)
+    # Validated before the revision-0 hint and the `--all` branch, or a typo is swallowed or generates
+    # everything against the default session (invariant 3, #683).
+    # `test_docs_all_refuses_a_token_that_names_neither_a_type_nor_a_session`.
+    if type_tokens:
+        type_tokens = _resolve_doc_types(type_tokens, owned_types)
     if meta.current_revision < 1:
         print(f"Session '{display_token(slug)}' has no model yet -- run `requivo run {slug}` to "
               "start the conversation before generating a document.")
         return
-    owned_types = tuple(t for t in DOC_TYPES if t in get_perimeter(resolve_perimeter(meta.perimeter)).artifact_types)
-    # Validated before the `--all` branch too, or a typo generates everything against the default
-    # session (invariant 3). `test_docs_all_refuses_a_token_that_names_neither_a_type_nor_a_session`.
-    if type_tokens:
-        type_tokens = _resolve_doc_types(type_tokens, owned_types)
     if a.all:
         if type_tokens:
             # `--all` with explicit types is ambiguous, so refused: `test_docs_all_refuses_a_token_that_names_neither_a_type_nor_a_session`.

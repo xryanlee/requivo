@@ -360,6 +360,29 @@ def test_docs_revision_zero_has_no_menu_and_points_at_run(monkeypatch):
     assert len([ln for ln in lines if "not generated" in ln]) == 6
 
 
+def test_docs_revision_zero_still_refuses_a_token_that_is_not_a_type():
+    """#683: the revision-0 hint must not swallow a typo; the valid invocation keeps the hint and exit 0."""
+    store.create_session("clitest-docs-empty-typo", "A request.")
+    assert "requivo run clitest-docs-empty-typo" in run_cli(["docs", "clitest-docs-empty-typo"])   # positive control
+    assert "requivo run clitest-docs-empty-typo" in run_cli(["docs", "clitest-docs-empty-typo", "prd"])
+    code, err = run_cli_fails(["docs", "clitest-docs-empty-typo", "bogus"], client=FakeClient())
+    assert code == 1 and "neither a document type nor a session" in err
+
+
+def test_status_of_a_loose_model_file_never_borrows_a_session_sharing_its_directory_name(tmp_path):
+    """#681, as `impact` does for #493: a model.json under a directory named like a session is a bare model."""
+    with _model_in_out("clitest-status-borrow") as p:
+        real = json.loads(run_cli(["status", "clitest-status-borrow", "--json"]))
+        assert {"revision", "artifacts", "perimeter"} <= real.keys()   # positive control
+        assert "→ requivo brief clitest-status-borrow" in run_cli(["status", "clitest-status-borrow"])
+        loose = tmp_path / "clitest-status-borrow" / "model.json"
+        loose.parent.mkdir()
+        loose.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+        payload = json.loads(run_cli(["status", str(loose), "--json"]))
+        assert not {"revision", "artifacts", "perimeter", "context_cards"} & payload.keys()
+        assert "→ requivo brief clitest-status-borrow" not in run_cli(["status", str(loose)])
+
+
 def test_docs_menu_rows_state_reads_artifact_status_not_revision_arithmetic():
     """A rev-1 artifact on a rev-2 session whose change touched none of its slots still reads *up to date*."""
     slug = seed_session("clitest-docs-menu-rows", "A request.", **_PROBLEM)
